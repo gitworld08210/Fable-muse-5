@@ -10,7 +10,7 @@ on:
   workflow_dispatch:
     inputs:
       build_type:
-        description: 'Build Type'
+        description: 'Build Type (debug or release)'
         required: true
         default: 'debug'
         type: choice
@@ -29,65 +29,49 @@ jobs:
     steps:
       - name: Checkout Code
         uses: actions/checkout@v4
-        with:
-          fetch-depth: 1
 
       - name: Set up JDK 21
         uses: actions/setup-java@v4
         with:
           distribution: 'temurin'
           java-version: '21'
-
-      - name: Accept Android SDK Licenses
-        run: |
-          mkdir -p $ANDROID_HOME/licenses
-          echo -e "\n8933bad161af6ba78b136de3c4f230c801f061cba4760a4533624040f74b23e4\nd56f5187479451eabf01fb78af6dfcb131a6481e\n24333f8a63b1d79e435e4a60e9ecfcb047000a68\n84831b9409646a233e85e454822e19784957385f" > $ANDROID_HOME/licenses/android-sdk-license
-          echo -e "\n84831b9409646a233e85e454822e19784957385f" > $ANDROID_HOME/licenses/android-sdk-preview-license
-
-      - name: Setup Gradle
-        uses: gradle/actions/setup-gradle@v4
+          cache: 'gradle'
 
       - name: Make Gradle wrapper executable
         run: chmod +x ./gradlew
 
-      - name: Prepare Build Environment & Keystores
-        env:
-          KEYSTORE_BASE64: ${{ secrets.KEYSTORE_BASE64 }}
-          INPUT_KEYSTORE_PATH: ${{ secrets.KEYSTORE_PATH }}
+      - name: Prepare Environment & Debug Keystore
         run: |
-          # 1. Ensure .env exists to prevent Secrets Gradle Plugin errors
           if [ ! -f .env ]; then
             touch .env
           fi
-
-          # 2. Ensure debug.keystore exists for debug signing
           if [ ! -f debug.keystore ]; then
-            echo "Generating debug.keystore for CI debug build..."
+            echo "Generating debug keystore for CI..."
             keytool -genkeypair -v -keystore debug.keystore \
               -storepass android -alias androiddebugkey -keypass android \
               -keyalg RSA -keysize 2048 -validity 10000 \
               -dname "CN=Android Debug,O=Android,C=US"
           fi
 
-          # 3. Handle Release Keystore from Secrets (Base64 or Path)
+      - name: Build Debug APK & Run Tests
+        if: ${{ github.event.inputs.build_type != 'release' && !startsWith(github.ref, 'refs/tags/v') }}
+        run: ./gradlew assembleDebug testDebugUnitTest --stacktrace --no-daemon
+
+      - name: Setup Release Keystore
+        if: ${{ github.event.inputs.build_type == 'release' || startsWith(github.ref, 'refs/tags/v') }}
+        env:
+          KEYSTORE_BASE64: ${{ secrets.KEYSTORE_BASE64 }}
+          INPUT_KEYSTORE_PATH: ${{ secrets.KEYSTORE_PATH }}
+        run: |
           if [ -n "$KEYSTORE_BASE64" ]; then
-            echo "Decoding KEYSTORE_BASE64 into release.keystore..."
+            echo "Decoding KEYSTORE_BASE64..."
             echo "$KEYSTORE_BASE64" | base64 -d > release.keystore
             echo "RESOLVED_KEYSTORE_PATH=$GITHUB_WORKSPACE/release.keystore" >> $GITHUB_ENV
           elif [ -n "$INPUT_KEYSTORE_PATH" ] && [ -f "$INPUT_KEYSTORE_PATH" ]; then
-            echo "Using existing keystore file at $INPUT_KEYSTORE_PATH..."
             echo "RESOLVED_KEYSTORE_PATH=$INPUT_KEYSTORE_PATH" >> $GITHUB_ENV
           elif [ -f "my-upload-key.jks" ]; then
-            echo "Found default my-upload-key.jks in workspace..."
             echo "RESOLVED_KEYSTORE_PATH=$GITHUB_WORKSPACE/my-upload-key.jks" >> $GITHUB_ENV
           fi
-
-      - name: Run Unit Tests
-        run: ./gradlew testDebugUnitTest --stacktrace --no-daemon
-
-      - name: Build Debug APK
-        if: ${{ github.event.inputs.build_type != 'release' && !startsWith(github.ref, 'refs/tags/v') }}
-        run: ./gradlew assembleDebug --stacktrace --no-daemon
 
       - name: Build Release APK
         if: ${{ github.event.inputs.build_type == 'release' || startsWith(github.ref, 'refs/tags/v') }}
@@ -99,11 +83,10 @@ jobs:
 
       - name: Upload APK Artifacts
         uses: actions/upload-artifact@v4
-        if: always()
+        if: success()
         with:
           name: flowpay-apks
           path: app/build/outputs/apk/**/*.apk
-          if-no-files-found: warn
           retention-days: 14
 
       - name: Upload Test Reports
@@ -112,6 +95,7 @@ jobs:
         with:
           name: test-reports
           path: app/build/reports/tests/
+          if-no-files-found: ignore
           retention-days: 7
 
       - name: Create GitHub Release
