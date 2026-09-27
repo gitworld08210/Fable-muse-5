@@ -118,6 +118,7 @@ import com.flowpay.app.ui.activities.SettingsActivity
 import com.flowpay.app.ui.activities.TransactionHistoryActivity
 import com.flowpay.app.ui.components.TransactionDetailDialog
 import com.flowpay.app.ui.dialogs.ContactPickerDialog
+import com.flowpay.app.ui.dialogs.SharePaymentQrDialog
 import com.flowpay.app.ui.theme.BlueAccentTheme
 import com.flowpay.app.ui.theme.FlowpayDarkGray
 import com.flowpay.app.ui.theme.FlowpayLightGray
@@ -344,6 +345,7 @@ class MainActivity : ComponentActivity() {
 fun PaymentActionButtons(
     onQRScanClick: () -> Unit,
     onPayContactClick: () -> Unit,
+    onReceiveQrClick: () -> Unit,
     isUpi123Ready: Boolean,
     isUssdReady: Boolean,
     isScanning: Boolean
@@ -353,10 +355,11 @@ fun PaymentActionButtons(
             .fillMaxWidth()
             .padding(horizontal = 32.dp),
         horizontalAlignment = Alignment.CenterHorizontally,
-        verticalArrangement = Arrangement.spacedBy(20.dp)
+        verticalArrangement = Arrangement.spacedBy(16.dp)
     ) {
         ScanQrButton(onQRScanClick, isUssdReady, isScanning)
         PayContactButton(onPayContactClick, isUpi123Ready)
+        ReceiveQrButton(onReceiveQrClick)
     }
 }
 
@@ -565,6 +568,71 @@ private fun PayContactButton(
     }
 }
 
+/** Receive / My QR — opens dialog to preview and share offline UPI QR code. */
+@Composable
+private fun ReceiveQrButton(
+    onReceiveQrClick: () -> Unit
+) {
+    var isReceivePressed by remember { mutableStateOf(false) }
+    val receiveButtonScale by animateFloatAsState(
+        targetValue = if (isReceivePressed) 0.94f else 1f,
+        animationSpec = tween(durationMillis = 200),
+        label = "Receive Button Scale"
+    )
+
+    Column(
+        horizontalAlignment = Alignment.CenterHorizontally,
+        verticalArrangement = Arrangement.spacedBy(10.dp)
+    ) {
+        Box(
+            modifier = Modifier
+                .size(70.dp)
+                .shadow(
+                    elevation = 8.dp,
+                    shape = RoundedCornerShape(20.dp),
+                    ambientColor = Color.White.copy(alpha = 0.1f),
+                    spotColor = Color.White.copy(alpha = 0.15f)
+                )
+                .scale(receiveButtonScale)
+                .background(
+                    color = FlowpaySurfaceDim,
+                    shape = RoundedCornerShape(20.dp)
+                )
+                .border(1.dp, Color.White.copy(alpha = 0.2f), RoundedCornerShape(20.dp))
+                .pointerInput(Unit) {
+                    detectTapGestures(
+                        onPress = {
+                            isReceivePressed = true
+                            tryAwaitRelease()
+                            isReceivePressed = false
+                        },
+                        onTap = { onReceiveQrClick() }
+                    )
+                },
+            contentAlignment = Alignment.Center
+        ) {
+            Icon(
+                imageVector = Icons.Default.QrCode,
+                contentDescription = "Receive / My QR Code",
+                tint = Color.White,
+                modifier = Modifier.size(32.dp)
+            )
+        }
+
+        Text(
+            text = "Receive / My QR",
+            fontSize = 15.sp,
+            fontWeight = FontWeight.SemiBold,
+            color = Color.White,
+            textAlign = TextAlign.Center,
+            style = TextStyle(
+                shadow = Shadow(Color.Black.copy(alpha = 0.6f), Offset(0f, 1f), 3f)
+            )
+        )
+    }
+}
+
+
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun MainScreen(
@@ -579,6 +647,8 @@ fun MainScreen(
     var savedBank by remember {
         mutableStateOf(sharedPreferences.getString(AppConstants.KEY_SELECTED_BANK, "hdfc") ?: "hdfc")
     }
+
+    var showShareQrDialog by remember { mutableStateOf(false) }
 
     // Pay Contact dials the UPI 123 IVR, so it stays inactive until the
     // UPI 123 configuration test has passed (re-checked on every resume so
@@ -793,27 +863,55 @@ fun MainScreen(
                                     )
                                 }
 
-                                // Settings Button
-                                Box(
-                                    modifier = Modifier
-                                        .padding(top = 8.dp, end = 8.dp)
-                                        .size(36.dp)
-                                        .clip(CircleShape)
-                                        .background(Color.White.copy(alpha = 0.22f))
-                                        .clickable(
-                                            indication = null,
-                                            interactionSource = remember { MutableInteractionSource() }
-                                        ) {
-                                            context.startActivity(Intent(context, SettingsActivity::class.java))
-                                        },
-                                    contentAlignment = Alignment.Center
+                                Row(
+                                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                                    verticalAlignment = Alignment.CenterVertically
                                 ) {
-                                    Icon(
-                                        imageVector = Icons.Outlined.Settings,
-                                        contentDescription = "Settings",
-                                        tint = Color.White,
-                                        modifier = Modifier.size(24.dp)
-                                    )
+                                    // My QR / Receive Button
+                                    Box(
+                                        modifier = Modifier
+                                            .padding(top = 8.dp)
+                                            .size(36.dp)
+                                            .clip(CircleShape)
+                                            .background(Color.White.copy(alpha = 0.22f))
+                                            .clickable(
+                                                indication = null,
+                                                interactionSource = remember { MutableInteractionSource() }
+                                            ) {
+                                                showShareQrDialog = true
+                                            },
+                                        contentAlignment = Alignment.Center
+                                    ) {
+                                        Icon(
+                                            imageVector = Icons.Default.QrCode,
+                                            contentDescription = "My QR Code",
+                                            tint = Color.White,
+                                            modifier = Modifier.size(22.dp)
+                                        )
+                                    }
+
+                                    // Settings Button
+                                    Box(
+                                        modifier = Modifier
+                                            .padding(top = 8.dp, end = 8.dp)
+                                            .size(36.dp)
+                                            .clip(CircleShape)
+                                            .background(Color.White.copy(alpha = 0.22f))
+                                            .clickable(
+                                                indication = null,
+                                                interactionSource = remember { MutableInteractionSource() }
+                                            ) {
+                                                context.startActivity(Intent(context, SettingsActivity::class.java))
+                                            },
+                                        contentAlignment = Alignment.Center
+                                    ) {
+                                        Icon(
+                                            imageVector = Icons.Outlined.Settings,
+                                            contentDescription = "Settings",
+                                            tint = Color.White,
+                                            modifier = Modifier.size(24.dp)
+                                        )
+                                    }
                                 }
                             }
 
@@ -934,6 +1032,7 @@ fun MainScreen(
                             else -> showPayContact = true
                         }
                     },
+                    onReceiveQrClick = { showShareQrDialog = true },
                     isUpi123Ready = isUpi123Ready,
                     isUssdReady = isUssdReady,
                     isScanning = isScanning
@@ -1176,6 +1275,12 @@ fun MainScreen(
                         showSmsPermissionDialog = false
                         pendingSmsAction = null
                     }
+                )
+            }
+
+            if (showShareQrDialog) {
+                SharePaymentQrDialog(
+                    onDismissRequest = { showShareQrDialog = false }
                 )
             }
         }
