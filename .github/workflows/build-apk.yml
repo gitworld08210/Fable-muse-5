@@ -52,37 +52,59 @@ jobs:
       - name: Make Gradle wrapper executable
         run: chmod +x ./gradlew
 
-      - name: Ensure Environment & Keystore
+      - name: Prepare Build Environment & Keystores
+        env:
+          KEYSTORE_BASE64: ${{ secrets.KEYSTORE_BASE64 }}
+          INPUT_KEYSTORE_PATH: ${{ secrets.KEYSTORE_PATH }}
         run: |
+          # 1. Ensure .env exists to prevent Secrets Gradle Plugin errors
           if [ ! -f .env ]; then
             touch .env
           fi
+
+          # 2. Ensure debug.keystore exists for debug signing
           if [ ! -f debug.keystore ]; then
-            echo "Generating debug.keystore for CI..."
-            keytool -genkeypair -v -keystore debug.keystore -storepass android -alias androiddebugkey -keypass android -keyalg RSA -keysize 2048 -validity 10000 -dname "CN=Android Debug,O=Android,C=US"
+            echo "Generating debug.keystore for CI debug build..."
+            keytool -genkeypair -v -keystore debug.keystore \
+              -storepass android -alias androiddebugkey -keypass android \
+              -keyalg RSA -keysize 2048 -validity 10000 \
+              -dname "CN=Android Debug,O=Android,C=US"
           fi
 
-      - name: Build Debug APK
-        if: ${{ github.event.inputs.build_type != 'release' }}
-        run: ./gradlew assembleDebug --stacktrace --no-daemon
+          # 3. Handle Release Keystore from Secrets (Base64 or Path)
+          if [ -n "$KEYSTORE_BASE64" ]; then
+            echo "Decoding KEYSTORE_BASE64 into release.keystore..."
+            echo "$KEYSTORE_BASE64" | base64 -d > release.keystore
+            echo "RESOLVED_KEYSTORE_PATH=$GITHUB_WORKSPACE/release.keystore" >> $GITHUB_ENV
+          elif [ -n "$INPUT_KEYSTORE_PATH" ] && [ -f "$INPUT_KEYSTORE_PATH" ]; then
+            echo "Using existing keystore file at $INPUT_KEYSTORE_PATH..."
+            echo "RESOLVED_KEYSTORE_PATH=$INPUT_KEYSTORE_PATH" >> $GITHUB_ENV
+          elif [ -f "my-upload-key.jks" ]; then
+            echo "Found default my-upload-key.jks in workspace..."
+            echo "RESOLVED_KEYSTORE_PATH=$GITHUB_WORKSPACE/my-upload-key.jks" >> $GITHUB_ENV
+          fi
 
       - name: Run Unit Tests
         run: ./gradlew testDebugUnitTest --stacktrace --no-daemon
 
+      - name: Build Debug APK
+        if: ${{ github.event.inputs.build_type != 'release' && !startsWith(github.ref, 'refs/tags/v') }}
+        run: ./gradlew assembleDebug --stacktrace --no-daemon
+
       - name: Build Release APK
-        if: ${{ github.event.inputs.build_type == 'release' }}
+        if: ${{ github.event.inputs.build_type == 'release' || startsWith(github.ref, 'refs/tags/v') }}
         run: ./gradlew assembleRelease --stacktrace --no-daemon
         env:
-          KEYSTORE_PATH: ${{ secrets.KEYSTORE_PATH }}
+          KEYSTORE_PATH: ${{ env.RESOLVED_KEYSTORE_PATH || secrets.KEYSTORE_PATH }}
           STORE_PASSWORD: ${{ secrets.STORE_PASSWORD }}
           KEY_PASSWORD: ${{ secrets.KEY_PASSWORD }}
 
-      - name: Upload Debug APK Artifact
+      - name: Upload APK Artifacts
         uses: actions/upload-artifact@v4
         if: always()
         with:
-          name: flowpay-debug-apk
-          path: app/build/outputs/apk/debug/*.apk
+          name: flowpay-apks
+          path: app/build/outputs/apk/**/*.apk
           if-no-files-found: warn
           retention-days: 14
 
@@ -98,7 +120,7 @@ jobs:
         if: startsWith(github.ref, 'refs/tags/v')
         uses: softprops/action-gh-release@v2
         with:
-          files: app/build/outputs/apk/debug/*.apk
+          files: app/build/outputs/apk/**/*.apk
           generate_release_notes: true
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
