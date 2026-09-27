@@ -38,13 +38,11 @@ jobs:
           distribution: 'temurin'
           java-version: '21'
 
-      - name: Setup Android SDK
-        uses: android-actions/setup-android@v3
-
-      - name: Accept Android SDK Licenses & Install Platform 36
+      - name: Accept Android SDK Licenses
         run: |
-          yes | $ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager --licenses || true
-          $ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager "platforms;android-36" "build-tools;36.0.0" || true
+          mkdir -p $ANDROID_HOME/licenses
+          echo -e "\n8933bad161af6ba78b136de3c4f230c801f061cba4760a4533624040f74b23e4\nd56f5187479451eabf01fb78af6dfcb131a6481e\n24333f8a63b1d79e435e4a60e9ecfcb047000a68\n84831b9409646a233e85e454822e19784957385f" > $ANDROID_HOME/licenses/android-sdk-license
+          echo -e "\n84831b9409646a233e85e454822e19784957385f" > $ANDROID_HOME/licenses/android-sdk-preview-license
 
       - name: Setup Gradle
         uses: gradle/actions/setup-gradle@v4
